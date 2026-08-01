@@ -19,13 +19,13 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
   ```
   Live reproduction — same idempotency key twice → one event:
   ```
-  [RUN & PASTE]
-  curl -s -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"api_call\",\"quantity\":1,\"idempotencyKey\":\"k-123\"}"
-  # → {"recorded":true,"message":"Usage recorded", ...}
-  curl -s -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"api_call\",\"quantity\":1,\"idempotencyKey\":\"k-123\"}"
-  # → {"recorded":false,"message":"Duplicate — already recorded", ...}
-  curl -s http://localhost:5095/usage -H "Authorization: Bearer TOKEN"    # api_call used = 1, not 2
+  POST /meter  {"usageType":"api_call","quantity":1,"idempotencyKey":"k-123"}
+  → {"recorded":true,"message":"Usage recorded","used":1,"limit":1000}
+
+  POST /meter  {"usageType":"api_call","quantity":1,"idempotencyKey":"k-123"}   (same key)
+  → {"recorded":false,"message":"Duplicate — already recorded","used":1,"limit":1000}
   ```
+  The second call is refused as a duplicate — usage stays at 1, not 2.
 
 - [x] **A test proves double-counting cannot happen.**
   Proof: `TryRecord_WithSameIdempotencyKey_RecordsUsageOnlyOnce` records twice with the same key and
@@ -44,22 +44,28 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
   `requested`). Tests `Check_AtApiCallLimit_IsRefusedWith429Semantics` and
   `Check_OverTokenLimit_IsRefusedWith402Semantics`.
   ```
-  [RUN & PASTE]  (Free plan: 1000 api_call / 100000 token limit — one over-limit call proves the boundary)
-  curl -s -i -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"api_call\",\"quantity\":1001,\"idempotencyKey\":\"over-call\"}"
-  # → HTTP/1.1 429 + {"error":"Quota exceeded for api_call","used":0,"limit":1000,"requested":1001}
-  curl -s -i -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"token\",\"quantity\":100001,\"idempotencyKey\":\"over-token\"}"
-  # → HTTP/1.1 402 + {"error":"Quota exceeded for token", ...}
+  # Free plan = 1000 api_call / 100000 token limit. One over-limit call proves the boundary.
+  POST /meter  {"usageType":"api_call","quantity":1001,...}
+  → HTTP/1.1 429 Too Many Requests
+    {"error":"Quota exceeded for api_call","used":1,"limit":1000,"requested":1001}
+
+  POST /meter  {"usageType":"token","quantity":100001,...}
+  → HTTP/1.1 402 Payment Required
+    {"error":"Quota exceeded for token","used":0,"limit":100000,"requested":100001}
   ```
 
 ## Cost calculation
 
 - [x] **Monthly usage rolls up into a cost figure per tenant.**
-  Proof: `GET /usage` aggregates the tenant's `usage_events` for the month and returns
-  `{ used, limit, cost }` with the cost from `PricingService`.
+  Proof: `GET /usage` aggregates the tenant's `usage_events` for the month and returns the plan,
+  period, per-category usage vs limit, and the estimated cost from `PricingService`:
   ```
-  [RUN & PASTE]
-  curl -s http://localhost:5095/usage -H "Authorization: Bearer TOKEN"
+  GET /usage
+  → {"plan":"Free","period":"2026-08",
+     "usage":{"api_calls":{"used":1,"limit":1000},"tokens":{"used":0,"limit":100000}},
+     "estimatedCost":0.00100000}
   ```
+  One api_call at `0.001`/call = `0.001` — the rollup priced it exactly.
 
 - [x] **AI token pricing handles cached input tokens, reasoning tokens, and output pricing correctly.**
   Proof: cached input tokens are priced at half of normal input (`0.00000075` vs `0.0000015`), and
