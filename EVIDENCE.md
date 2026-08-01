@@ -83,16 +83,21 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
 
 ## Stripe integration
 
-- [ ] **Subscription checkout works end-to-end in Stripe test mode.**
-  Proof: `POST /billing/checkout` creates a Checkout Session for the Pro price; completing it in test
-  mode fires `checkout.session.completed` → the webhook flips the tenant Free → Pro. Reproduce with
-  the Stripe CLI:
+- [x] **Subscription checkout works end-to-end in Stripe test mode.**
+  Proof: `POST /billing/checkout` creates a real Stripe Checkout Session for the Pro price; completing
+  it in test mode fires `checkout.session.completed` → the webhook flips the tenant Free → Pro.
+  Verified live with `stripe listen`:
   ```
-  [RUN & PASTE]
-  stripe listen --forward-to localhost:5095/webhooks/stripe
-  # complete the returned Checkout URL in test mode, then:
-  curl -s http://localhost:5095/usage -H "Authorization: Bearer TOKEN"   # plan now Pro, new limits
+  POST /billing/checkout
+  → {"checkoutUrl":"https://checkout.stripe.com/c/pay/cs_test_a1hIfHUFj0aefGufYnRRO..."}
+
+  # completed the Checkout in test mode (card 4242 4242 4242 4242), webhook fired, then:
+  GET /usage
+  → {"plan":"Pro","period":"2026-08",
+     "usage":{"api_calls":{"used":1,"limit":10000},"tokens":{"used":0,"limit":1000000}}, ...}
   ```
+  The tenant flipped Free → Pro and the limits jumped to the Pro plan (10000 / 1000000) — driven only
+  by the verified webhook, never by the client.
 
 - [x] **Webhooks verify signatures, ignore duplicate events, and update tenant plan/status.**
   Proof: the handler verifies the Stripe signature (a forged one is rejected `400`) and deduplicates
