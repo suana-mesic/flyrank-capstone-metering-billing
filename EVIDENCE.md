@@ -15,14 +15,16 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
   with `ON CONFLICT DO NOTHING`, returning the original result on a duplicate. Test
   `TryRecord_WithSameIdempotencyKey_RecordsUsageOnlyOnce`.
   ```
-  Passed!  - Failed: 0, Passed: 10, Skipped: 0    (UsageRepositoryTests included)
+  Test summary: total: 10; failed: 0; succeeded: 10; skipped: 0    (UsageRepositoryTests included)
   ```
   Live reproduction — same idempotency key twice → one event:
   ```
   [RUN & PASTE]
-  curl -s -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"type\":\"api_call\",\"quantity\":1,\"idempotencyKey\":\"k-123\"}"
-  curl -s -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"type\":\"api_call\",\"quantity\":1,\"idempotencyKey\":\"k-123\"}"
-  curl -s http://localhost:5095/usage -H "Authorization: Bearer TOKEN"    # apiCalls used = 1, not 2
+  curl -s -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"api_call\",\"quantity\":1,\"idempotencyKey\":\"k-123\"}"
+  # → {"recorded":true,"message":"Usage recorded", ...}
+  curl -s -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"api_call\",\"quantity\":1,\"idempotencyKey\":\"k-123\"}"
+  # → {"recorded":false,"message":"Duplicate — already recorded", ...}
+  curl -s http://localhost:5095/usage -H "Authorization: Bearer TOKEN"    # api_call used = 1, not 2
   ```
 
 - [x] **A test proves double-counting cannot happen.**
@@ -37,13 +39,16 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
   (allowed) and the two refusal tests below.
 
 - [x] **Responses carry the correct status codes (429 / 402) and a message explaining why.**
-  Proof: at the API-call limit → `402 Payment Required` (upgrade needed); over the token limit →
-  `429 Too Many Requests` (quota exceeded), each with an explanatory message. Tests
-  `Check_AtApiCallLimit_IsRefusedWith` (402) and `Check_OverTokenLimit_IsRefusedWith` (429).
+  Proof: over the API-call quota → `429 Too Many Requests` (quota exceeded); over the token quota →
+  `402 Payment Required` (upgrade needed), each with an explanatory JSON message (`used`, `limit`,
+  `requested`). Tests `Check_AtApiCallLimit_IsRefusedWith429Semantics` and
+  `Check_OverTokenLimit_IsRefusedWith402Semantics`.
   ```
-  [RUN & PASTE]  (drive a tenant to its limit, then one more call)
-  curl -s -i -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"type\":\"api_call\",\"quantity\":1,\"idempotencyKey\":\"over-1\"}"
-  # → HTTP/1.1 402 (or 429 over the token limit) + JSON message
+  [RUN & PASTE]  (Free plan: 1000 api_call / 100000 token limit — one over-limit call proves the boundary)
+  curl -s -i -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"api_call\",\"quantity\":1001,\"idempotencyKey\":\"over-call\"}"
+  # → HTTP/1.1 429 + {"error":"Quota exceeded for api_call","used":0,"limit":1000,"requested":1001}
+  curl -s -i -X POST http://localhost:5095/meter -H "Authorization: Bearer TOKEN" -H "Content-Type: application/json" -d "{\"usageType\":\"token\",\"quantity\":100001,\"idempotencyKey\":\"over-token\"}"
+  # → HTTP/1.1 402 + {"error":"Quota exceeded for token", ...}
   ```
 
 ## Cost calculation
@@ -62,7 +67,7 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
   `CachedInputTokens_AreCheaperThanNormalInputTokens` and
   `ReasoningTokens_AreBilledAsOutput_NotAsSeparateCategory`.
   ```
-  Passed!  - Failed: 0, Passed: 10, Skipped: 0    (PricingServiceTests included)
+  Test summary: total: 10; failed: 0; succeeded: 10; skipped: 0    (PricingServiceTests included)
   ```
 
 - [x] **Pricing constants are pinned and covered by tests.**
@@ -88,7 +93,7 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
   by `stripe_event_id` (PRIMARY KEY in `processed_webhook_events`, replay processed once). Tests
   `ForgedWebhook_WithInvalidSignature_IsRejected` and `TryMarkProcessed_WithSameEventId_IsProcessedOnlyOnce`.
   ```
-  Passed!  - Failed: 0, Passed: 10, Skipped: 0    (WebhookSignatureTests + WebhookRepositoryTests)
+  Test summary: total: 10; failed: 0; succeeded: 10; skipped: 0    (WebhookSignatureTests + WebhookRepositoryTests)
   ```
 
 ## Data model, tests & documentation
@@ -103,7 +108,7 @@ Run tests with `dotnet test`. Run the system with `docker compose up -d` +
   Proof: `dotnet test` — 10 tests across `PricingServiceTests`, `QuotaServiceTests`,
   `UsageRepositoryTests`, `WebhookSignatureTests`, `WebhookRepositoryTests`.
   ```
-  Passed!  - Failed: 0, Passed: 10, Skipped: 0
+  Test summary: total: 10; failed: 0; succeeded: 10; skipped: 0
   ```
 
 - [x] **README + architecture diagram + setup instructions; submission-pack files present.**
