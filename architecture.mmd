@@ -1,0 +1,46 @@
+flowchart TB
+    client["Client / caller<br/>(billable action)"]
+
+    subgraph api["BillingApi (.NET 9 minimal API · port 5095)"]
+        direction TB
+        auth["/auth/register · /auth/login<br/>BCrypt + JWT"]
+        ask["/api/ask<br/>dummy AI call"]
+        meter["/meter<br/>record usage"]
+        quota{"QuotaService<br/>at limit?"}
+        usage["/usage<br/>rollup: used / limit / cost"]
+        checkout["/billing/checkout<br/>create Checkout session"]
+        webhook["/webhooks/stripe<br/>1. verify signature<br/>2. dedupe event<br/>3. sync plan/status"]
+        pricing["PricingService<br/>pinned prices<br/>cached + reasoning rules"]
+    end
+
+    subgraph db["Postgres 16 (Docker · port 5434)"]
+        direction TB
+        tenants[("tenants<br/>plan_id · subscription_status")]
+        plans[("plans<br/>Free · Pro")]
+        events[("usage_events<br/>UNIQUE(tenant_id, idempotency_key)")]
+        subs[("subscriptions")]
+        processed[("processed_webhook_events<br/>dedupe by event id")]
+    end
+
+    stripe["Stripe (test mode)"]
+
+    client -->|JWT| auth
+    client --> ask
+    client --> meter
+    ask --> quota
+    meter --> quota
+    quota -->|over| refuse["402 / 429<br/>honest refusal"]
+    quota -->|ok| events
+    usage --> events
+    usage --> pricing
+    client --> usage
+
+    client --> checkout
+    checkout -->|create subscription| stripe
+    stripe -.->|signed webhook| webhook
+    webhook --> processed
+    webhook --> tenants
+    webhook --> subs
+
+    events -.-> tenants
+    tenants -.-> plans

@@ -1,0 +1,34 @@
+# FlyRank capstone manifest — read by the automated evaluator.
+name: usage-metering-billing
+description: >
+  A usage-metering and billing service: it meters every billable action with
+  idempotent deduplication, enforces the tenant's plan quota at the boundary
+  with honest 402/429 status codes, rolls usage up into a monthly cost using
+  real AI-token pricing rules (cached input cheaper, reasoning billed as
+  output), and integrates Stripe (test mode) for the Free -> Pro upgrade with
+  signature-verified, deduplicated webhooks.
+
+# One command to boot the system on a clean machine.
+# Postgres in Docker; the API runs with dotnet. Startup seeds the two plans (Free, Pro).
+run: docker compose up -d && dotnet run --project BillingApi
+
+# Create a demo tenant so the metering/usage/checkout flow has an account to act on.
+seed: 'curl -s -X POST http://localhost:5095/auth/register -H "Content-Type: application/json" -d "{\"email\":\"demo@billing.com\",\"password\":\"demo1234\"}"'
+
+# Runs the automated test suite (10 tests: pricing, quota, idempotency, webhook signature + dedup).
+test: dotnet test
+
+base_url: http://localhost:5095
+
+endpoints:
+  # Auth
+  - POST /auth/register
+  - POST /auth/login
+  # Metering (idempotent)
+  - POST /meter
+  - POST /api/ask
+  # Usage + cost rollup
+  - GET /usage
+  # Stripe (test mode)
+  - POST /billing/checkout
+  - POST /webhooks/stripe
